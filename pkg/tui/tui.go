@@ -287,9 +287,9 @@ func (m *Model) View() string {
 				badge = criticalBadge.String()
 			}
 
-			lastTime := s.LastCheckedAt.Format("15:04:05")
-			if s.LastCheckedAt.IsZero() {
-				lastTime = "never"
+			lastTime := "never"
+			if !s.LastCheckedAt.IsZero() {
+				lastTime = s.LastCheckedAt.Local().Format("15:04:05")
 			}
 
 			durStr := fmt.Sprintf("%dms", s.LastDurationMs)
@@ -322,7 +322,7 @@ func (m *Model) View() string {
 			}
 
 			tag := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(statusColor)).Render(fmt.Sprintf("[%-11s]", e.Status))
-			tStr := e.Timestamp.Format("15:04:05")
+			tStr := e.Timestamp.Local().Format("15:04:05")
 			out := e.Stdout
 			if out == "" && e.Stderr != "" {
 				out = e.Stderr
