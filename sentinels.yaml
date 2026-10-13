@@ -1,0 +1,34 @@
+version: "1"
+global:
+  check_interval_default: "60s"
+  notifications:
+    provider: "ntfy" # or "discord", "telegram"
+    endpoint: "https://ntfy.sh/beelzebub-homelab-alerts"
+    alert_on: ["healed", "exhausted"] # suppress normal pass checks
+
+sentinels:
+  - name: "media-storage-mount"
+    interval: "30s"
+    timeout: "5s"
+    probe:
+      type: "shell"
+      command: "test -d /mnt || test -d /tmp"
+    remediation:
+      max_retries: 3
+      backoff: "10s"
+      command: "echo 'remediating media mount...'"
+    on_exhausted: "Failed to remount media storage after 3 attempts."
+
+  - name: "wan-speedtest-gateway"
+    interval: "30m"
+    timeout: "60s"
+    probe:
+      type: "threshold"
+      # Returns numerical Mbps
+      command: "echo '85.4'"
+      min_threshold: 50.0 # Alert if bandwidth drops below 50 Mbps
+    remediation:
+      max_retries: 2
+      backoff: "15s"
+      command: "echo 'resetting network gateway...'"
+    on_exhausted: "WAN speed remained degraded below 50 Mbps."
