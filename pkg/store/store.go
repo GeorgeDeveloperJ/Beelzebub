@@ -19,6 +19,7 @@ const (
 	StatusRemediating EventStatus = "REMEDIATING"
 	StatusHealed      EventStatus = "HEALED"
 	StatusExhausted   EventStatus = "EXHAUSTED"
+	StatusPending     EventStatus = "PENDING"
 )
 
 // Event represents an audit log entry in SQLite.

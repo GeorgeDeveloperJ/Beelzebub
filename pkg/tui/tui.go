@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -21,16 +22,17 @@ type ActionMsg string
 
 // Model represents the Bubbletea TUI state.
 type Model struct {
-	cfg       *config.Config
-	store     *store.Store
-	engine    *engine.Engine
-	width     int
-	height    int
-	cursor    int
-	sentinels []store.SentinelState
-	events    []store.Event
-	statusMsg string
-	err       error
+	cfg          *config.Config
+	store        *store.Store
+	engine       *engine.Engine
+	width        int
+	height       int
+	cursor       int
+	sentinels    []store.SentinelState
+	events       []store.Event
+	statusMsg    string
+	daemonStatus string
+	err          error
 }
 
 // Styles using Lipgloss
@@ -70,6 +72,11 @@ var (
 			Foreground(lipgloss.Color("#FF3333")).
 			SetString("CRITICAL")
 
+	pendingBadge = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#AAAAAA")).
+			SetString("PENDING")
+
 	keyBindingStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888"))
 
@@ -83,14 +90,30 @@ var (
 			Padding(1, 2)
 )
 
+// checkDaemonStatus inspects systemd and running processes to determine daemon liveness.
+func checkDaemonStatus() string {
+	if err := exec.Command("systemctl", "is-active", "--quiet", "beelzebub.service").Run(); err == nil {
+		return "🟢 DAEMON: ACTIVE (systemd)"
+	}
+	if err := exec.Command("systemctl", "is-active", "--quiet", "sentinel.service").Run(); err == nil {
+		return "🟢 DAEMON: ACTIVE (systemd)"
+	}
+	out, err := exec.Command("pgrep", "-f", "beelzebub daemon").Output()
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		return "🟢 DAEMON: ACTIVE (process)"
+	}
+	return "⚪ DAEMON: INACTIVE (standalone)"
+}
+
 // New creates a new Bubbletea TUI Model.
 func New(cfg *config.Config, s *store.Store, eng *engine.Engine) *Model {
 	return &Model{
-		cfg:       cfg,
-		store:     s,
-		engine:    eng,
-		cursor:    0,
-		statusMsg: "Ready. Use [j/k] to select, [space/r] to check, [x] to remediate, [c] to clear, [q] to quit.",
+		cfg:          cfg,
+		store:        s,
+		engine:       eng,
+		cursor:       0,
+		daemonStatus: checkDaemonStatus(),
+		statusMsg:    "Ready. Use [j/k] to select, [space/r] to check, [x] to remediate, [c] to clear, [q] to quit.",
 	}
 }
 
@@ -105,15 +128,36 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+type dataRefreshMsg struct {
+	states       []store.SentinelState
+	events       []store.Event
+	daemonStatus string
+}
+
 func (m *Model) refreshDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		// Read states and recent events
 		states, _ := m.store.GetAllSentinelStates()
+
+		// If DB has no states yet, but config has sentinels, seed them so the fleet table is populated
+		if len(states) == 0 && m.cfg != nil && len(m.cfg.Sentinels) > 0 {
+			for _, sc := range m.cfg.Sentinels {
+				_ = m.store.UpdateSentinelState(&store.SentinelState{
+					SentinelName:        sc.Name,
+					Status:              store.StatusPending,
+					ConsecutiveFailures: 0,
+					LastOutput:          "Pending initial check",
+				})
+			}
+			states, _ = m.store.GetAllSentinelStates()
+		}
+
 		events, _ := m.store.GetRecentEvents(12)
-		return struct {
-			states []store.SentinelState
-			events []store.Event
-		}{states: states, events: events}
+		return dataRefreshMsg{
+			states:       states,
+			events:       events,
+			daemonStatus: checkDaemonStatus(),
+		}
 	}
 }
 
@@ -128,12 +172,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		return m, tea.Batch(m.refreshDataCmd(), tickCmd())
 
-	case struct {
-		states []store.SentinelState
-		events []store.Event
-	}:
+	case dataRefreshMsg:
 		m.sentinels = msg.states
 		m.events = msg.events
+		m.daemonStatus = msg.daemonStatus
 		if m.cursor >= len(m.sentinels) && len(m.sentinels) > 0 {
 			m.cursor = len(m.sentinels) - 1
 		}
@@ -215,10 +257,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) View() string {
 	var sb strings.Builder
 
-	// Top Title Bar
+	// Top Title Bar with Live Daemon Indicator
 	title := titleStyle.Render("🛡️  BEELZEBUB — Autonomous SRE Sentinel Cockpit")
 	timeStr := time.Now().Format("2006-01-02 15:04:05 MST")
-	topBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(timeStr))
+	daemonColor := "#00FF66"
+	if strings.Contains(m.daemonStatus, "INACTIVE") {
+		daemonColor = "#FFA500"
+	}
+	daemonBadge := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(daemonColor)).Render(m.daemonStatus)
+	topBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "   ", daemonBadge, "   ", lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(timeStr))
 	sb.WriteString(topBar + "\n\n")
 
 	// Panel 1: Sentinel Fleet Overview
@@ -232,7 +279,9 @@ func (m *Model) View() string {
 
 		for i, s := range m.sentinels {
 			badge := healthyBadge.String()
-			if s.Status == store.StatusRemediating {
+			if s.Status == store.StatusPending {
+				badge = pendingBadge.String()
+			} else if s.Status == store.StatusRemediating {
 				badge = degradedBadge.String()
 			} else if s.Status == store.StatusExhausted {
 				badge = criticalBadge.String()

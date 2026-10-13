@@ -77,8 +77,62 @@ func printUsage() {
 	fmt.Println("  --db      Path to SQLite database (default: sentinel.db)")
 }
 
+func resolveConfigPath(custom string) string {
+	if custom != "" && custom != defaultConfigPath {
+		return custom
+	}
+	// 1. Current working directory
+	if _, err := os.Stat("sentinels.yaml"); err == nil {
+		return "sentinels.yaml"
+	}
+	// 2. Production systemd location
+	if _, err := os.Stat("/etc/beelzebub/sentinels.yaml"); err == nil {
+		return "/etc/beelzebub/sentinels.yaml"
+	}
+	// 3. User config directory
+	if home, err := os.UserHomeDir(); err == nil {
+		userPath := filepath.Join(home, ".config", "beelzebub", "sentinels.yaml")
+		if _, err := os.Stat(userPath); err == nil {
+			return userPath
+		}
+	}
+	return defaultConfigPath
+}
+
+func resolveDBPath(custom string) string {
+	if custom != "" && custom != defaultDBPath {
+		return custom
+	}
+	// 1. Production daemon database if present
+	if _, err := os.Stat("/var/lib/beelzebub/sentinel.db"); err == nil {
+		return "/var/lib/beelzebub/sentinel.db"
+	}
+	// 2. CWD database if present
+	if _, err := os.Stat("sentinel.db"); err == nil {
+		return "sentinel.db"
+	}
+	// 3. If /var/lib/beelzebub directory exists and is writable
+	if fi, err := os.Stat("/var/lib/beelzebub"); err == nil && fi.IsDir() {
+		testFile := "/var/lib/beelzebub/.write_test"
+		if err := os.WriteFile(testFile, []byte(""), 0644); err == nil {
+			_ = os.Remove(testFile)
+			return "/var/lib/beelzebub/sentinel.db"
+		}
+	}
+	// 4. User data directory
+	if home, err := os.UserHomeDir(); err == nil {
+		userDir := filepath.Join(home, ".local", "share", "beelzebub")
+		_ = os.MkdirAll(userDir, 0755)
+		return filepath.Join(userDir, "sentinel.db")
+	}
+	return defaultDBPath
+}
+
 func runDaemon(cfgPath, dbPath string) {
-	log.Printf("[Beelzebub] Starting daemon mode. Loading config from %q...", cfgPath)
+	cfgPath = resolveConfigPath(cfgPath)
+	dbPath = resolveDBPath(dbPath)
+
+	log.Printf("[Beelzebub] Starting daemon mode. Config: %q | DB: %q", cfgPath, dbPath)
 
 	cfg, err := config.LoadFromFile(cfgPath)
 	if err != nil {
@@ -112,7 +166,9 @@ func runDaemon(cfgPath, dbPath string) {
 }
 
 func runTUI(cfgPath, dbPath string) {
-	// If config file exists, load it; otherwise create minimal placeholder
+	cfgPath = resolveConfigPath(cfgPath)
+	dbPath = resolveDBPath(dbPath)
+
 	var cfg *config.Config
 	var err error
 
@@ -123,7 +179,6 @@ func runTUI(cfgPath, dbPath string) {
 			os.Exit(1)
 		}
 	} else {
-		// Use empty configuration with defaults
 		cfg = &config.Config{
 			Version: "1",
 			Global: config.GlobalConfig{
@@ -139,6 +194,19 @@ func runTUI(cfgPath, dbPath string) {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	// Seed configured sentinels into SQLite state if they aren't recorded yet
+	for _, sc := range cfg.Sentinels {
+		existing, _ := st.GetSentinelState(sc.Name)
+		if existing == nil {
+			_ = st.UpdateSentinelState(&store.SentinelState{
+				SentinelName:        sc.Name,
+				Status:              store.StatusPending,
+				ConsecutiveFailures: 0,
+				LastOutput:          "Waiting for evaluation",
+			})
+		}
+	}
 
 	eng := engine.New(cfg, st)
 
