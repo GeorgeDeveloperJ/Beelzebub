@@ -81,13 +81,13 @@ func resolveConfigPath(custom string) string {
 	if custom != "" && custom != defaultConfigPath {
 		return custom
 	}
-	// 1. Current working directory
-	if _, err := os.Stat("sentinels.yaml"); err == nil {
-		return "sentinels.yaml"
-	}
-	// 2. Production systemd location
+	// 1. Production systemd location if present
 	if _, err := os.Stat("/etc/beelzebub/sentinels.yaml"); err == nil {
 		return "/etc/beelzebub/sentinels.yaml"
+	}
+	// 2. Current working directory
+	if _, err := os.Stat("sentinels.yaml"); err == nil {
+		return "sentinels.yaml"
 	}
 	// 3. User config directory
 	if home, err := os.UserHomeDir(); err == nil {
@@ -195,18 +195,12 @@ func runTUI(cfgPath, dbPath string) {
 	}
 	defer st.Close()
 
-	// Seed configured sentinels into SQLite state if they aren't recorded yet
+	// Synchronize sentinel states in SQLite: prune deleted ones, seed new ones
+	var activeNames []string
 	for _, sc := range cfg.Sentinels {
-		existing, _ := st.GetSentinelState(sc.Name)
-		if existing == nil {
-			_ = st.UpdateSentinelState(&store.SentinelState{
-				SentinelName:        sc.Name,
-				Status:              store.StatusPending,
-				ConsecutiveFailures: 0,
-				LastOutput:          "Waiting for evaluation",
-			})
-		}
+		activeNames = append(activeNames, sc.Name)
 	}
+	_ = st.SyncSentinelStates(activeNames)
 
 	eng := engine.New(cfg, st)
 

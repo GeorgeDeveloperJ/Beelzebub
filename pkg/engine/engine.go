@@ -49,18 +49,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.running = true
 	e.mu.Unlock()
 
-	// Initialize sentinel states in store if not present
+	// Synchronize sentinel states: prune stale sentinels from DB and seed new ones
+	var activeNames []string
 	for _, sc := range e.cfg.Sentinels {
-		currState, err := e.store.GetSentinelState(sc.Name)
-		if err == nil && currState == nil {
-			_ = e.store.UpdateSentinelState(&store.SentinelState{
-				SentinelName:        sc.Name,
-				Status:              store.StatusPass,
-				ConsecutiveFailures: 0,
-				LastCheckedAt:       time.Now().UTC(),
-			})
-		}
+		activeNames = append(activeNames, sc.Name)
 	}
+	_ = e.store.SyncSentinelStates(activeNames)
 
 	for _, sc := range e.cfg.Sentinels {
 		e.wg.Add(1)

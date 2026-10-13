@@ -281,3 +281,54 @@ func (s *Store) ResetSentinelState(name string) error {
 	_, err := s.db.Exec(query, string(StatusPass), time.Now().UTC(), name)
 	return err
 }
+
+// SyncSentinelStates ensures sentinel_state contains exactly the configured active sentinels.
+// It deletes stale sentinels no longer present in activeNames, and seeds any new ones.
+func (s *Store) SyncSentinelStates(activeNames []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	activeSet := make(map[string]bool, len(activeNames))
+	for _, name := range activeNames {
+		activeSet[name] = true
+	}
+
+	// 1. Read existing names
+	rows, err := s.db.Query("SELECT sentinel_name FROM sentinel_state;")
+	if err != nil {
+		return fmt.Errorf("failed to query sentinel names for sync: %w", err)
+	}
+	defer rows.Close()
+
+	var toDelete []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			if !activeSet[name] {
+				toDelete = append(toDelete, name)
+			}
+		}
+	}
+	_ = rows.Close()
+
+	// 2. Prune stale sentinels
+	for _, delName := range toDelete {
+		_, _ = s.db.Exec("DELETE FROM sentinel_state WHERE sentinel_name = ?;", delName)
+	}
+
+	// 3. Seed newly added sentinels
+	now := time.Now().UTC()
+	for _, name := range activeNames {
+		var count int
+		_ = s.db.QueryRow("SELECT COUNT(*) FROM sentinel_state WHERE sentinel_name = ?;", name).Scan(&count)
+		if count == 0 {
+			query := `
+			INSERT INTO sentinel_state (sentinel_name, status, consecutive_failures, last_checked_at, last_duration_ms, last_output, updated_at)
+			VALUES (?, ?, 0, ?, 0, ?, ?);
+			`
+			_, _ = s.db.Exec(query, name, string(StatusPending), now, "Waiting for initial check", now)
+		}
+	}
+
+	return nil
+}

@@ -139,19 +139,30 @@ type dataRefreshMsg struct {
 func (m *Model) refreshDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		// Read states and recent events
-		states, _ := m.store.GetAllSentinelStates()
+		allStates, _ := m.store.GetAllSentinelStates()
 
-		// If DB has no states yet, but config has sentinels, seed them so the fleet table is populated
-		if len(states) == 0 && m.cfg != nil && len(m.cfg.Sentinels) > 0 {
-			for _, sc := range m.cfg.Sentinels {
-				_ = m.store.UpdateSentinelState(&store.SentinelState{
-					SentinelName:        sc.Name,
-					Status:              store.StatusPending,
-					ConsecutiveFailures: 0,
-					LastOutput:          "Pending initial check",
-				})
+		// Filter or sync states to match active config if config is defined
+		var states []store.SentinelState
+		if m.cfg != nil && len(m.cfg.Sentinels) > 0 {
+			stateMap := make(map[string]store.SentinelState, len(allStates))
+			for _, s := range allStates {
+				stateMap[s.SentinelName] = s
 			}
-			states, _ = m.store.GetAllSentinelStates()
+
+			for _, sc := range m.cfg.Sentinels {
+				if st, ok := stateMap[sc.Name]; ok {
+					states = append(states, st)
+				} else {
+					states = append(states, store.SentinelState{
+						SentinelName:        sc.Name,
+						Status:              store.StatusPending,
+						ConsecutiveFailures: 0,
+						LastOutput:          "Waiting for initial check",
+					})
+				}
+			}
+		} else {
+			states = allStates
 		}
 
 		events, _ := m.store.GetRecentEvents(6)
