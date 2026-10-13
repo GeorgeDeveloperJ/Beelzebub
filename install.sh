@@ -3,13 +3,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN_SOURCE="${SCRIPT_DIR}/dist/sentinel"
-BIN_TARGET="/usr/local/bin/sentinel"
+BIN_SOURCE="${SCRIPT_DIR}/dist/beelzebub"
+BIN_TARGET="/usr/local/bin/beelzebub"
+BIN_SYMLINK="/usr/local/bin/sentinel"
 CONFIG_DIR="/etc/beelzebub"
 CONFIG_FILE="${CONFIG_DIR}/sentinels.yaml"
 DATA_DIR="/var/lib/beelzebub"
-SERVICE_SOURCE="${SCRIPT_DIR}/packaging/sentinel.service"
-SERVICE_TARGET="/etc/systemd/system/sentinel.service"
+SERVICE_SOURCE="${SCRIPT_DIR}/packaging/beelzebub.service"
+SERVICE_TARGET="/etc/systemd/system/beelzebub.service"
+LEGACY_SERVICE_TARGET="/etc/systemd/system/sentinel.service"
 
 # Colour helpers
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
@@ -46,7 +48,8 @@ do_install() {
 
   heading "2. Installing binary"
   install -Dm755 "${BIN_SOURCE}" "${BIN_TARGET}"
-  info "Installed ${BIN_TARGET}"
+  ln -sf "${BIN_TARGET}" "${BIN_SYMLINK}"
+  info "Installed ${BIN_TARGET} (with symlink ${BIN_SYMLINK})"
 
   heading "3. Configuring paths and defaults"
   mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"
@@ -62,6 +65,13 @@ do_install() {
   fi
 
   heading "4. Installing systemd service"
+  # Clean up legacy sentinel.service if previously installed
+  if [[ -f "${LEGACY_SERVICE_TARGET}" ]]; then
+    systemctl stop sentinel.service 2>/dev/null || true
+    systemctl disable sentinel.service 2>/dev/null || true
+    rm -f "${LEGACY_SERVICE_TARGET}"
+  fi
+
   install -Dm644 "${SERVICE_SOURCE}" "${SERVICE_TARGET}"
   info "Installed ${SERVICE_TARGET}"
   systemctl daemon-reload
@@ -71,38 +81,47 @@ do_install() {
   echo "Installation complete!"
   echo ""
   echo "To enable and start Beelzebub daemon now, run:"
-  echo "  sudo systemctl enable --now sentinel.service"
+  echo "  sudo systemctl enable --now beelzebub.service"
   echo ""
   echo "To launch the interactive centered TUI cockpit at any time, run:"
-  echo "  sentinel"
+  echo "  beelzebub"
   echo ""
   echo "To check daemon logs:"
-  echo "  journalctl -u sentinel.service -f"
+  echo "  journalctl -u beelzebub.service -f"
 }
 
 do_uninstall() {
   check_root
   heading "Uninstalling Beelzebub"
 
-  if systemctl is-active --quiet sentinel.service 2>/dev/null; then
-    warn "Stopping sentinel service..."
-    systemctl stop sentinel.service
-  fi
+  for svc in beelzebub.service sentinel.service; do
+    if systemctl is-active --quiet "${svc}" 2>/dev/null; then
+      warn "Stopping ${svc}..."
+      systemctl stop "${svc}"
+    fi
 
-  if systemctl is-enabled --quiet sentinel.service 2>/dev/null; then
-    warn "Disabling sentinel service..."
-    systemctl disable sentinel.service
-  fi
+    if systemctl is-enabled --quiet "${svc}" 2>/dev/null; then
+      warn "Disabling ${svc}..."
+      systemctl disable "${svc}"
+    fi
+  done
 
   if [[ -f "${SERVICE_TARGET}" ]]; then
     rm -f "${SERVICE_TARGET}"
-    systemctl daemon-reload
     info "Removed ${SERVICE_TARGET}"
   fi
+  if [[ -f "${LEGACY_SERVICE_TARGET}" ]]; then
+    rm -f "${LEGACY_SERVICE_TARGET}"
+  fi
+  systemctl daemon-reload
 
   if [[ -f "${BIN_TARGET}" ]]; then
     rm -f "${BIN_TARGET}"
     info "Removed ${BIN_TARGET}"
+  fi
+  if [[ -L "${BIN_SYMLINK}" ]]; then
+    rm -f "${BIN_SYMLINK}"
+    info "Removed ${BIN_SYMLINK}"
   fi
 
   warn "Configuration (${CONFIG_DIR}) and data (${DATA_DIR}) were preserved."

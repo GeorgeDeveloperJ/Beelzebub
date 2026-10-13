@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/var/lib/beelzebub
-ExecStart=/usr/local/bin/sentinel daemon --config /etc/beelzebub/sentinels.yaml --db /var/lib/beelzebub/sentinel.db
+ExecStart=/usr/local/bin/beelzebub daemon --config /etc/beelzebub/sentinels.yaml --db /var/lib/beelzebub/sentinel.db
 Restart=always
 RestartSec=5s
 

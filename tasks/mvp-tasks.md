@@ -30,8 +30,9 @@ Single static Go binary (`sentinel daemon`, `sentinel tui`), Charmbracelet ecosy
 - Panel 3: Keybinding control bar (`[space/r]` force check, `[x]` remediate, `[s]` diagnostic, `[c]` reset counters, `[q]` quit).
 
 ### [x] Milestone 5: Systemd Packaging & Static Compilation
-- CLI entrypoint supporting `sentinel daemon` and `sentinel tui` in `cmd/sentinel/main.go`.
+- CLI entrypoint supporting `beelzebub daemon` and `beelzebub tui` in `cmd/beelzebub/main.go`.
 - POSIX signal trapping (`SIGINT`, `SIGTERM`, `SIGHUP`) for clean daemon shutdown.
-- Systemd service unit in `packaging/sentinel.service`.
-- Standalone stripped static build script in `scripts/build.sh` producing `dist/sentinel`.
+- Systemd service unit in `packaging/beelzebub.service`.
+- Standalone stripped static build script in `scripts/build.sh` producing `dist/beelzebub`.
+- Automated installer in `install.sh` managing `beelzebub.service`.
 - End-to-end reality check verification.

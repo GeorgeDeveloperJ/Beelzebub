@@ -21,13 +21,12 @@ Instead of passive resource monitoring (CPU/RAM meters that page you at 3 AM), *
 
 ```mermaid
 flowchart TD
-    YAML["sentinels.yaml (Declarative Rules)"] --> Engine["sentinel daemon (systemd service)"]
-    Engine --> Probe["Probe Execution (Strict Timeouts)"]
+    YAML["sentinels.yaml (Declarative Rules)"] --> Engine["beelzebub daemon (systemd service)"]
     Probe -->|Pass| Store["SQLite Audit Store (events table)"]
     Probe -->|Fail| Remediate["Remediation Playbook (Exponential Backoff)"]
     Remediate -->|Healed| Notify["Webhook Dispatch (ntfy / Discord / Telegram)"]
     Remediate -->|Exhausted| Alert["High-Priority Alert & Freeze"]
-    Store --> TUI["sentinel tui (Centered Charmbracelet Cockpit)"]
+    Store --> TUI["beelzebub tui (Centered Charmbracelet Cockpit)"]
 ```
 
 ---
@@ -44,7 +43,7 @@ cd Beelzebub
 ./scripts/build.sh
 
 # Launch the interactive centered TUI cockpit
-./dist/sentinel
+./dist/beelzebub
 ```
 
 ### 2. Automated System Installation
@@ -53,10 +52,10 @@ cd Beelzebub
 sudo ./install.sh
 
 # Enable and start the background daemon
-sudo systemctl enable --now sentinel.service
+sudo systemctl enable --now beelzebub.service
 
 # Inspect live daemon logs
-journalctl -u sentinel.service -f
+journalctl -u beelzebub.service -f
 ```
 
 ---
@@ -108,7 +107,7 @@ sentinels:
 
 ## 🖥️ Interactive Operator TUI Cockpit
 
-When logging in over SSH, launch the TUI by running `sentinel` (or `sentinel tui`):
+When logging in over SSH, launch the TUI by running `beelzebub` (or `beelzebub tui`):
 
 ```text
        ┌────────────────────────────────────────────────────────────────────────┐

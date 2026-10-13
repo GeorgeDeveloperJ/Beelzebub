@@ -64,7 +64,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("Usage: sentinel <command> [options]")
+	fmt.Println("Usage: beelzebub <command> [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  daemon    Run headlessly as a background service/daemon")

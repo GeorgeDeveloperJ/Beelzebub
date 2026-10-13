@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT_DIR="${ROOT_DIR}/dist"
-BINARY_NAME="sentinel"
+BINARY_NAME="beelzebub"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -13,7 +13,10 @@ CGO_ENABLED=0 go build \
     -ldflags="-s -w -X main.version=1.0.0" \
     -trimpath \
     -o "${OUTPUT_DIR}/${BINARY_NAME}" \
-    "${ROOT_DIR}/cmd/sentinel"
+    "${ROOT_DIR}/cmd/beelzebub"
+
+# Create sentinel symlink for backward compatibility
+ln -sf "${BINARY_NAME}" "${OUTPUT_DIR}/sentinel"
 
 echo "Build complete: ${OUTPUT_DIR}/${BINARY_NAME}"
 ls -lh "${OUTPUT_DIR}/${BINARY_NAME}"
