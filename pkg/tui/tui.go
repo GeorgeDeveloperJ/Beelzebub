@@ -368,8 +368,9 @@ func (m *Model) View() string {
 	if totalSentinels == 0 {
 		sb.WriteString("  No sentinels found in SQLite database.\n")
 	} else {
-		// Header row
-		colHeader := fmt.Sprintf("  %-25s %-12s %-10s %-20s %-10s", "SENTINEL", "HEALTH", "RETRIES", "LAST CHECK", "DURATION")
+		// Fixed column widths:
+		// SENTINEL: 26, HEALTH: 12, RETRIES: 8, LAST CHECK: 18, DURATION: 10
+		colHeader := fmt.Sprintf("  %-26s %-12s %-8s %-18s %-10s", "SENTINEL", "HEALTH", "RETRIES", "LAST CHECK", "DURATION")
 		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AAAAAA")).Render(colHeader) + "\n")
 
 		end := m.scrollOffset + visible
@@ -379,13 +380,21 @@ func (m *Model) View() string {
 
 		for idx := m.scrollOffset; idx < end; idx++ {
 			s := m.sentinels[idx]
-			badge := healthyBadge.String()
-			if s.Status == store.StatusPending {
-				badge = pendingBadge.String()
-			} else if s.Status == store.StatusRemediating {
-				badge = degradedBadge.String()
-			} else if s.Status == store.StatusExhausted {
-				badge = criticalBadge.String()
+
+			// Raw status text and style
+			statusText := "HEALTHY"
+			statusStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF66"))
+
+			switch s.Status {
+			case store.StatusPending:
+				statusText = "PENDING"
+				statusStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AAAAAA"))
+			case store.StatusRemediating:
+				statusText = "DEGRADED"
+				statusStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFA500"))
+			case store.StatusExhausted:
+				statusText = "CRITICAL"
+				statusStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF3333"))
 			}
 
 			lastTime := "never"
@@ -393,15 +402,25 @@ func (m *Model) View() string {
 				lastTime = s.LastCheckedAt.Local().Format("15:04:05")
 			}
 
-			durStr := fmt.Sprintf("%dms", s.LastDurationMs)
-			retriesStr := fmt.Sprintf("%d", s.ConsecutiveFailures)
+			sentinelName := s.SentinelName
+			if len(sentinelName) > 25 {
+				sentinelName = sentinelName[:22] + "..."
+			}
 
-			row := fmt.Sprintf("  %-25s %-12s %-10s %-20s %-10s", s.SentinelName, badge, retriesStr, lastTime, durStr)
+			// Format columns with exact widths
+			colName := fmt.Sprintf("%-26s", sentinelName)
+			colHealth := fmt.Sprintf("%-12s", statusText)
+			colRetries := fmt.Sprintf("%-8d", s.ConsecutiveFailures)
+			colLastCheck := fmt.Sprintf("%-18s", lastTime)
+			colDuration := fmt.Sprintf("%-10s", fmt.Sprintf("%dms", s.LastDurationMs))
 
 			if idx == m.cursor {
-				sb.WriteString(selectedStyle.Render(row) + "\n")
+				cursorRow := fmt.Sprintf("▶ %s %s %s %s %s", colName, colHealth, colRetries, colLastCheck, colDuration)
+				sb.WriteString(selectedStyle.Render(cursorRow) + "\n")
 			} else {
-				sb.WriteString(row + "\n")
+				styledHealth := statusStyle.Render(colHealth)
+				regularRow := fmt.Sprintf("  %s %s %s %s %s", colName, styledHealth, colRetries, colLastCheck, colDuration)
+				sb.WriteString(regularRow + "\n")
 			}
 		}
 
@@ -454,12 +473,22 @@ func (m *Model) View() string {
 
 	content := mainContainerStyle.Render(sb.String())
 
-	// Centering: If terminal dimensions are received, center in screen
+	// Centering: Center horizontally and vertically within terminal window
 	contentHeight := lipgloss.Height(content)
 	contentWidth := lipgloss.Width(content)
 
-	if m.width > contentWidth && m.height > contentHeight {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	vPos := lipgloss.Center
+	if m.height <= contentHeight {
+		vPos = lipgloss.Top
+	}
+
+	hPos := lipgloss.Center
+	if m.width <= contentWidth {
+		hPos = lipgloss.Left
+	}
+
+	if m.width > 0 && m.height > 0 {
+		return lipgloss.Place(m.width, m.height, hPos, vPos, content)
 	}
 
 	return content
