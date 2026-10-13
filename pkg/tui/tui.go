@@ -28,6 +28,7 @@ type Model struct {
 	width        int
 	height       int
 	cursor       int
+	scrollOffset int
 	sentinels    []store.SentinelState
 	events       []store.Event
 	statusMsg    string
@@ -87,7 +88,7 @@ var (
 	mainContainerStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#7D56F4")).
-			Padding(1, 2)
+			Padding(0, 1)
 )
 
 // checkDaemonStatus inspects systemd and running processes to determine daemon liveness.
@@ -112,8 +113,9 @@ func New(cfg *config.Config, s *store.Store, eng *engine.Engine) *Model {
 		store:        s,
 		engine:       eng,
 		cursor:       0,
+		scrollOffset: 0,
 		daemonStatus: checkDaemonStatus(),
-		statusMsg:    "Ready. Use [j/k] to select, [space/r] to check, [x] to remediate, [c] to clear, [q] to quit.",
+		statusMsg:    "Ready. Use [j/k/arrows] to scroll, [space/r] to check, [x] to remediate, [c] to clear, [q] to quit.",
 	}
 }
 
@@ -152,12 +154,71 @@ func (m *Model) refreshDataCmd() tea.Cmd {
 			states, _ = m.store.GetAllSentinelStates()
 		}
 
-		events, _ := m.store.GetRecentEvents(12)
+		events, _ := m.store.GetRecentEvents(6)
 		return dataRefreshMsg{
 			states:       states,
 			events:       events,
 			daemonStatus: checkDaemonStatus(),
 		}
+	}
+}
+
+// maxVisibleRows calculates how many sentinel rows fit dynamically in the terminal window.
+func (m *Model) maxVisibleRows() int {
+	if m.height <= 0 {
+		return 10
+	}
+	// Fixed vertical footprint:
+	// Top bar: 2 lines
+	// Fleet header & columns: 2 lines
+	// Spacing: 1 line
+	// Incident header & logs: 1 + 6 = 7 lines
+	// Spacing: 1 line
+	// Status message: 1 line
+	// Controls bar: 3 lines
+	// Container borders/padding: 2 lines
+	// Centering safety margin: 2 lines
+	// Total overhead: ~21 lines
+	available := m.height - 21
+	if available < 5 {
+		return 5
+	}
+	if available > 25 {
+		return 25
+	}
+	return available
+}
+
+// clampScroll keeps the cursor within the current visible scroll window.
+func (m *Model) clampScroll() {
+	if len(m.sentinels) == 0 {
+		m.cursor = 0
+		m.scrollOffset = 0
+		return
+	}
+	if m.cursor >= len(m.sentinels) {
+		m.cursor = len(m.sentinels) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+
+	visible := m.maxVisibleRows()
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	} else if m.cursor >= m.scrollOffset+visible {
+		m.scrollOffset = m.cursor - visible + 1
+	}
+
+	maxOffset := len(m.sentinels) - visible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
 	}
 }
 
@@ -167,6 +228,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampScroll()
 		return m, nil
 
 	case TickMsg:
@@ -176,9 +238,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sentinels = msg.states
 		m.events = msg.events
 		m.daemonStatus = msg.daemonStatus
-		if m.cursor >= len(m.sentinels) && len(m.sentinels) > 0 {
-			m.cursor = len(m.sentinels) - 1
-		}
+		m.clampScroll()
 		return m, nil
 
 	case ActionMsg:
@@ -186,6 +246,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshDataCmd()
 
 	case tea.KeyMsg:
+		visible := m.maxVisibleRows()
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -193,12 +254,38 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.clampScroll()
 			}
 
 		case "down", "j":
 			if m.cursor < len(m.sentinels)-1 {
 				m.cursor++
+				m.clampScroll()
 			}
+
+		case "pgup":
+			m.cursor -= visible
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.clampScroll()
+
+		case "pgdown":
+			m.cursor += visible
+			if m.cursor >= len(m.sentinels) {
+				m.cursor = len(m.sentinels) - 1
+			}
+			m.clampScroll()
+
+		case "home", "g":
+			m.cursor = 0
+			m.clampScroll()
+
+		case "end", "G":
+			if len(m.sentinels) > 0 {
+				m.cursor = len(m.sentinels) - 1
+			}
+			m.clampScroll()
 
 		case " ", "r": // Force manual probe check
 			if len(m.sentinels) > 0 && m.cursor < len(m.sentinels) {
@@ -269,15 +356,29 @@ func (m *Model) View() string {
 	sb.WriteString(topBar + "\n\n")
 
 	// Panel 1: Sentinel Fleet Overview
-	sb.WriteString(headerStyle.Render("── SENTINEL FLEET OVERVIEW ────────────────────────────────────────────────") + "\n")
-	if len(m.sentinels) == 0 {
+	visible := m.maxVisibleRows()
+	totalSentinels := len(m.sentinels)
+	headerText := fmt.Sprintf("── SENTINEL FLEET OVERVIEW (%d total) ", totalSentinels)
+	if totalSentinels > visible {
+		headerText = fmt.Sprintf("── SENTINEL FLEET OVERVIEW [%d-%d of %d] ", m.scrollOffset+1, min(m.scrollOffset+visible, totalSentinels), totalSentinels)
+	}
+	ruleFiller := strings.Repeat("─", max(2, 75-len(headerText)))
+	sb.WriteString(headerStyle.Render(headerText+ruleFiller) + "\n")
+
+	if totalSentinels == 0 {
 		sb.WriteString("  No sentinels found in SQLite database.\n")
 	} else {
 		// Header row
 		colHeader := fmt.Sprintf("  %-25s %-12s %-10s %-20s %-10s", "SENTINEL", "HEALTH", "RETRIES", "LAST CHECK", "DURATION")
 		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AAAAAA")).Render(colHeader) + "\n")
 
-		for i, s := range m.sentinels {
+		end := m.scrollOffset + visible
+		if end > totalSentinels {
+			end = totalSentinels
+		}
+
+		for idx := m.scrollOffset; idx < end; idx++ {
+			s := m.sentinels[idx]
 			badge := healthyBadge.String()
 			if s.Status == store.StatusPending {
 				badge = pendingBadge.String()
@@ -297,11 +398,16 @@ func (m *Model) View() string {
 
 			row := fmt.Sprintf("  %-25s %-12s %-10s %-20s %-10s", s.SentinelName, badge, retriesStr, lastTime, durStr)
 
-			if i == m.cursor {
+			if idx == m.cursor {
 				sb.WriteString(selectedStyle.Render(row) + "\n")
 			} else {
 				sb.WriteString(row + "\n")
 			}
+		}
+
+		if totalSentinels > visible {
+			scrollIndicator := fmt.Sprintf("  ▲▼ [Use j/k or PgUp/PgDn to scroll • %d more]", totalSentinels-visible)
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(scrollIndicator) + "\n")
 		}
 	}
 	sb.WriteString("\n")
@@ -327,8 +433,8 @@ func (m *Model) View() string {
 			if out == "" && e.Stderr != "" {
 				out = e.Stderr
 			}
-			if len(out) > 60 {
-				out = out[:57] + "..."
+			if len(out) > 55 {
+				out = out[:52] + "..."
 			}
 
 			logLine := fmt.Sprintf("  %s %s %-20s %s (%dms)", tStr, tag, e.SentinelName, out, e.DurationMs)
@@ -349,9 +455,26 @@ func (m *Model) View() string {
 	content := mainContainerStyle.Render(sb.String())
 
 	// Centering: If terminal dimensions are received, center in screen
-	if m.width > 0 && m.height > 0 {
+	contentHeight := lipgloss.Height(content)
+	contentWidth := lipgloss.Width(content)
+
+	if m.width > contentWidth && m.height > contentHeight {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 	}
 
 	return content
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
