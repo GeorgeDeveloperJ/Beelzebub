@@ -1,0 +1,28 @@
+# Binaries & build artifacts
+dist/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/sentinel
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+
+# IDE & OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

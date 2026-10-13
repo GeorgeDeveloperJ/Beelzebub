@@ -1,0 +1,20 @@
+[Unit]
+Description=Beelzebub Self-Healing Homelab Sentinel Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/beelzebub
+ExecStart=/usr/local/bin/sentinel daemon --config /etc/beelzebub/sentinels.yaml --db /var/lib/beelzebub/sentinel.db
+Restart=always
+RestartSec=5s
+
+# Process and resource isolation
+LimitNOFILE=65535
+TimeoutStopSec=15s
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
